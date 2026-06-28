@@ -1,0 +1,13 @@
+{
+  "name": "jobpulse",
+  "version": "1.0.0",
+  "description": "AI Job Market Intelligence powered by Anakin Wire + Universal Scraper",
+  "private": true,
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  }
+}
