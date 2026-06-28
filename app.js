@@ -1,83 +1,68 @@
 /**
  * JobPulse — app.js
- * Core logic: Anakin Universal Scraper + AI analysis via Anakin.ai workflow
+ * Core logic: Anakin Universal Scraper + Anakin.ai workflow
  *
  * Flow:
  * 1. User enters role + location
- * 2. We call Anakin.io /v1/scrape to get live job listings from Naukri / LinkedIn
- * 3. We parse / extract structured job data
- * 4. We call Anakin.ai workflow API to generate AI market intelligence
- * 5. We render the results dashboard
+ * 2. POST /api/analyze  ← Vercel serverless proxy (no CORS issues)
+ *    ├── Anakin.io Universal Scraper scrapes live job listings
+ *    └── Anakin.ai AI generates structured market intelligence
+ * 3. Render the results dashboard
+ *
+ * Fallback: demo mode with realistic data if no API keys
  */
 
-// ─── Config ─────────────────────────────────────────────────────────────────
+// ─── Config ───────────────────────────────────────────────────────────────────
 const CONFIG = {
-  scraperApiKey: '',      // anakin.io key
-  anakinToken: '',        // anakin.ai bearer token
-  geminiKey: '',          // optional
+  scraperApiKey: '',   // anakin.io API key
+  anakinToken: '',     // anakin.ai bearer token
 };
 
-// Load saved config from localStorage
+// ─── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadConfig();
+  ['role-input', 'location-input'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') runAnalysis();
+    });
+  });
+});
+
+// ─── Config Persistence ───────────────────────────────────────────────────────
 function loadConfig() {
-  const saved = localStorage.getItem('jobpulse_config');
-  if (saved) {
-    try {
-      const parsed = JSON.parse(saved);
-      Object.assign(CONFIG, parsed);
-      if (CONFIG.scraperApiKey) document.getElementById('scraper-key').value = CONFIG.scraperApiKey;
-      if (CONFIG.anakinToken) document.getElementById('anakin-token').value = CONFIG.anakinToken;
-      if (CONFIG.geminiKey) document.getElementById('gemini-key').value = CONFIG.geminiKey;
-    } catch (e) {}
-  }
+  try {
+    const saved = JSON.parse(localStorage.getItem('jobpulse_config') || '{}');
+    Object.assign(CONFIG, saved);
+    if (CONFIG.scraperApiKey) document.getElementById('scraper-key').value = CONFIG.scraperApiKey;
+    if (CONFIG.anakinToken)   document.getElementById('anakin-token').value = CONFIG.anakinToken;
+  } catch (e) {}
 }
 
 function saveConfig() {
   CONFIG.scraperApiKey = document.getElementById('scraper-key').value.trim();
-  CONFIG.anakinToken = document.getElementById('anakin-token').value.trim();
-  CONFIG.geminiKey = document.getElementById('gemini-key').value.trim();
+  CONFIG.anakinToken   = document.getElementById('anakin-token').value.trim();
   localStorage.setItem('jobpulse_config', JSON.stringify(CONFIG));
   showToast('✅ API keys saved!');
 }
 
 function toggleConfig() {
-  const body = document.getElementById('config-body');
+  const body  = document.getElementById('config-body');
   const arrow = document.getElementById('config-arrow');
-  const isHidden = body.style.display === 'none';
-  body.style.display = isHidden ? 'block' : 'none';
-  arrow.textContent = isHidden ? '▲' : '▼';
+  const open  = body.style.display === 'none';
+  body.style.display = open ? 'block' : 'none';
+  arrow.textContent  = open ? '▲' : '▼';
 }
 
 function fillExample(role, location) {
-  document.getElementById('role-input').value = role;
+  document.getElementById('role-input').value     = role;
   document.getElementById('location-input').value = location;
   document.getElementById('role-input').focus();
 }
 
-function showToast(msg) {
-  const toast = document.createElement('div');
-  toast.style.cssText = `
-    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
-    background:#1e2030; border:1px solid rgba(255,255,255,0.1); border-radius:10px;
-    color:#f0f0f8; font-size:0.85rem; padding:10px 20px; z-index:9999;
-    animation: fadeInUp 0.3s ease-out;
-  `;
-  toast.textContent = msg;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 3000);
-}
-
-// ─── Loading Steps ────────────────────────────────────────────────────────────
-function advanceStep(stepNum) {
-  const prev = document.getElementById(`step-${stepNum - 1}`);
-  if (prev) { prev.classList.remove('active'); prev.classList.add('done'); }
-  const cur = document.getElementById(`step-${stepNum}`);
-  if (cur) cur.classList.add('active');
-}
-
 // ─── Main Analysis ────────────────────────────────────────────────────────────
 async function runAnalysis() {
-  const role = document.getElementById('role-input').value.trim();
-  const location = document.getElementById('location-input').value.trim();
+  const role     = document.getElementById('role-input').value.trim();
+  const location = document.getElementById('location-input').value.trim() || 'India';
 
   if (!role) {
     showToast('⚠️ Please enter a job role');
@@ -85,425 +70,458 @@ async function runAnalysis() {
     return;
   }
 
-  // Re-read config from inputs in case user hasn't saved
+  // Read keys from inputs (in case unsaved)
   CONFIG.scraperApiKey = document.getElementById('scraper-key').value.trim() || CONFIG.scraperApiKey;
-  CONFIG.anakinToken = document.getElementById('anakin-token').value.trim() || CONFIG.anakinToken;
-  CONFIG.geminiKey = document.getElementById('gemini-key').value.trim() || CONFIG.geminiKey;
+  CONFIG.anakinToken   = document.getElementById('anakin-token').value.trim() || CONFIG.anakinToken;
 
-  // UI state
-  document.getElementById('analyze-btn').disabled = true;
-  document.getElementById('results-section').style.display = 'none';
-  document.getElementById('loading-section').style.display = 'flex';
-
-  // Reset steps
-  ['step-1','step-2','step-3','step-4'].forEach(id => {
-    const el = document.getElementById(id);
-    el.classList.remove('active','done');
-  });
-  document.getElementById('step-1').classList.add('active');
+  // UI: loading state
+  setUI('loading');
+  resetSteps();
+  activateStep(1);
 
   try {
-    // Step 1 & 2: Scrape jobs
-    await delay(800);
+    await delay(700);
+    activateStep(2);
+    await delay(500);
 
-    let jobs = [];
-    const locationStr = location || 'India';
+    // ── Call API proxy ────────────────────────────────────────────────────────
+    let jobs     = [];
+    let analysis = null;
+    let source   = 'demo';
+    let aiSource = 'local';
 
-    if (CONFIG.scraperApiKey) {
-      jobs = await scrapeJobsWithAnakin(role, locationStr);
+    const hasKeys = CONFIG.scraperApiKey || CONFIG.anakinToken;
+
+    if (hasKeys) {
+      try {
+        // Try the Vercel serverless proxy first (when deployed)
+        const resp = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            role,
+            location,
+            scraperKey: CONFIG.scraperApiKey,
+            anakinToken: CONFIG.anakinToken
+          })
+        });
+
+        if (resp.ok) {
+          const data = await resp.json();
+          jobs     = data.jobs     || [];
+          analysis = data.analysis || null;
+          source   = data.meta?.source   || 'anakin-scraper';
+          aiSource = data.meta?.aiSource || 'anakin-ai';
+        } else {
+          // Fallback: direct API call (may have CORS in browser — handled gracefully)
+          throw new Error(`API responded ${resp.status}`);
+        }
+      } catch (e) {
+        console.warn('Proxy failed, trying direct:', e.message);
+        // Try direct Anakin.io scraper call
+        try {
+          jobs   = await scrapeDirectly(role, location, CONFIG.scraperApiKey);
+          source = 'anakin-scraper';
+        } catch (e2) {
+          console.warn('Direct scrape also failed:', e2.message);
+          jobs   = getDemoJobs(role, location);
+          source = 'demo';
+          showToast('ℹ️ Live scraping unavailable in browser — using demo data. Deploy to Vercel for full live data.');
+        }
+      }
     } else {
-      // Use demo data with a notice
-      jobs = getDemoJobs(role, locationStr);
-      showToast('ℹ️ Demo mode — add your Anakin.io key for live data');
+      jobs   = getDemoJobs(role, location);
+      source = 'demo';
+      showToast('ℹ️ Demo mode — add API keys in ⚙️ for live data');
     }
 
-    advanceStep(2);
-    await delay(600);
+    activateStep(3);
+    await delay(700);
 
-    // Step 3: AI analysis
-    advanceStep(3);
-    await delay(800);
-
-    let analysis;
-    if (CONFIG.anakinToken) {
-      analysis = await runAnakinAIWorkflow(role, locationStr, jobs);
-    } else {
-      analysis = generateLocalAnalysis(role, locationStr, jobs);
+    // Local AI analysis if server didn't provide one
+    if (!analysis) {
+      analysis = generateLocalAnalysis(role, location, jobs);
+      aiSource = 'local';
     }
 
-    advanceStep(4);
-    await delay(600);
+    activateStep(4);
+    await delay(500);
 
-    // Render results
-    renderResults(role, locationStr, jobs, analysis);
-
-    document.getElementById('loading-section').style.display = 'none';
-    document.getElementById('results-section').style.display = 'block';
+    // Render
+    renderResults(role, location, jobs, analysis, source, aiSource);
+    setUI('results');
 
   } catch (err) {
     console.error('Analysis failed:', err);
-    showToast('❌ Error: ' + err.message + ' — switching to demo mode');
-    const jobs = getDemoJobs(role, location || 'India');
-    const analysis = generateLocalAnalysis(role, location || 'India', jobs);
-    renderResults(role, location || 'India', jobs, analysis);
-    document.getElementById('loading-section').style.display = 'none';
-    document.getElementById('results-section').style.display = 'block';
-  } finally {
-    document.getElementById('analyze-btn').disabled = false;
+    showToast('❌ Something went wrong — showing demo data');
+    const jobs     = getDemoJobs(role, location);
+    const analysis = generateLocalAnalysis(role, location, jobs);
+    renderResults(role, location, jobs, analysis, 'demo', 'local');
+    setUI('results');
   }
 }
 
-// ─── Anakin Universal Scraper ─────────────────────────────────────────────────
-async function scrapeJobsWithAnakin(role, location) {
-  /**
-   * Anakin.io Universal Scraper API
-   * POST https://api.anakin.io/v1/scrape
-   * Headers: X-API-Key: <key>
-   * Body: { url, extractionSchema }
-   */
+// ─── Direct Anakin Scraper (browser fallback) ─────────────────────────────────
+async function scrapeDirectly(role, location, apiKey) {
+  if (!apiKey) throw new Error('No API key');
 
-  const searchQuery = encodeURIComponent(`${role} ${location}`);
-  const targetUrl = `https://www.naukri.com/jobs-in-${location.toLowerCase().replace(/\s+/g,'-')}?q=${searchQuery}&k=${encodeURIComponent(role)}`;
-
-  const scraperBody = {
-    url: targetUrl,
-    waitForSelector: '.jobTuple',
-    extractionSchema: {
-      type: 'object',
-      properties: {
-        jobs: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              title:    { type: 'string', description: 'Job title' },
-              company:  { type: 'string', description: 'Company name' },
-              location: { type: 'string', description: 'Job location' },
-              salary:   { type: 'string', description: 'Salary range if mentioned' },
-              skills:   { type: 'array', items: { type: 'string' }, description: 'Required skills' },
-              experience: { type: 'string', description: 'Experience required' }
-            }
-          },
-          description: 'List of job listings'
-        }
-      }
-    }
-  };
+  const q   = encodeURIComponent(role);
+  const loc = encodeURIComponent(location);
+  const url = `https://www.naukri.com/jobs-in-${location.toLowerCase().replace(/\s+/g,'-')}?k=${q}`;
 
   const resp = await fetch('https://api.anakin.io/v1/scrape', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': CONFIG.scraperApiKey
-    },
-    body: JSON.stringify(scraperBody)
-  });
-
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`Anakin Scraper error ${resp.status}: ${errText}`);
-  }
-
-  const data = await resp.json();
-
-  // Extract jobs from response
-  const jobs = data?.data?.jobs || data?.extracted?.jobs || data?.jobs || [];
-
-  if (!jobs.length) {
-    // Fallback: try to parse the markdown content
-    return parseJobsFromMarkdown(data?.markdown || data?.content || '', role, location);
-  }
-
-  return jobs.slice(0, 20);
-}
-
-function parseJobsFromMarkdown(markdown, role, location) {
-  // Basic extraction from scraped markdown text
-  const lines = markdown.split('\n');
-  const jobs = [];
-  for (let i = 0; i < lines.length && jobs.length < 15; i++) {
-    const line = lines[i].trim();
-    if (line.includes(role) && line.length < 120) {
-      jobs.push({
-        title: line.substring(0, 80),
-        company: lines[i+1]?.trim()?.substring(0, 60) || 'Unknown',
-        location: location,
-        salary: '',
-        skills: [],
-        experience: ''
-      });
-    }
-  }
-  return jobs.length ? jobs : getDemoJobs(role, location);
-}
-
-// ─── Anakin.ai Workflow API ───────────────────────────────────────────────────
-async function runAnakinAIWorkflow(role, location, jobs) {
-  /**
-   * Anakin.ai App/Workflow API
-   * POST https://api.anakin.ai/v1/quickapps/{app_id}/runs
-   * Headers: Authorization: Bearer <token>
-   *
-   * Since we need a specific app_id, we call the general chat completion
-   * endpoint with a structured prompt — the user can replace with their
-   * actual workflow app ID.
-   */
-
-  const jobsSummary = jobs.slice(0, 10).map(j =>
-    `- ${j.title} at ${j.company} (${j.location}) | Skills: ${(j.skills||[]).join(', ')} | Salary: ${j.salary || 'Not specified'}`
-  ).join('\n');
-
-  const prompt = `You are a job market intelligence analyst. Analyze these ${jobs.length} job listings for "${role}" in "${location}" and provide:
-
-Job Listings Sample:
-${jobsSummary}
-
-Provide a JSON response with:
-{
-  "summary": "3-4 sentence market brief with bold key insights",
-  "topSkills": [{"name": "skill", "percentage": 85, "trend": "rising"}], (top 8)
-  "salaryInsights": {
-    "median": "₹X LPA",
-    "range_low": "₹X LPA", 
-    "range_high": "₹X LPA",
-    "freshers": "₹X LPA",
-    "senior": "₹X LPA"
-  },
-  "topCompanies": [{"name": "Company", "openings": 12, "type": "hot"}] (top 6),
-  "marketSignal": "buyer|balanced|candidate"
-}`;
-
-  // Try Anakin.ai chat API
-  const resp = await fetch('https://api.anakin.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${CONFIG.anakinToken}`
+      'X-API-Key': apiKey
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      response_format: { type: 'json_object' }
+      url,
+      waitForSelector: 'body',
+      timeout: 20000,
+      extractionSchema: {
+        type: 'object',
+        properties: {
+          jobs: {
+            type: 'array',
+            description: 'All job listings on the page',
+            items: {
+              type: 'object',
+              properties: {
+                title:      { type: 'string', description: 'Job title' },
+                company:    { type: 'string', description: 'Company name' },
+                location:   { type: 'string', description: 'Location' },
+                salary:     { type: 'string', description: 'Salary range' },
+                experience: { type: 'string', description: 'Experience required' },
+                skills:     { type: 'array', items: { type: 'string' }, description: 'Skills needed' }
+              }
+            }
+          }
+        }
+      }
     })
   });
 
-  if (!resp.ok) {
-    const errText = await resp.text();
-    console.warn('Anakin.ai API error:', resp.status, errText);
-    return generateLocalAnalysis(role, location, jobs);
-  }
-
+  if (!resp.ok) throw new Error(`Scraper HTTP ${resp.status}`);
   const data = await resp.json();
-  const content = data?.choices?.[0]?.message?.content || '{}';
-
-  try {
-    return JSON.parse(content);
-  } catch {
-    return generateLocalAnalysis(role, location, jobs);
-  }
+  const jobs = data?.data?.jobs || data?.extracted?.jobs || data?.jobs || [];
+  return jobs.length ? jobs.slice(0, 20) : getDemoJobs(role, location);
 }
 
-// ─── Local AI Analysis (fallback / demo) ─────────────────────────────────────
-function generateLocalAnalysis(role, location, jobs) {
-  const roleLC = role.toLowerCase();
-
-  // Smart skill sets per role type
-  const skillSets = {
-    frontend: [
-      { name: 'React.js', percentage: 88, trend: 'rising' },
-      { name: 'TypeScript', percentage: 76, trend: 'rising' },
-      { name: 'Next.js', percentage: 68, trend: 'rising' },
-      { name: 'Tailwind CSS', percentage: 62, trend: 'rising' },
-      { name: 'JavaScript', percentage: 95, trend: 'stable' },
-      { name: 'Node.js', percentage: 55, trend: 'stable' },
-      { name: 'Git / GitHub', percentage: 90, trend: 'stable' },
-      { name: 'REST APIs', percentage: 72, trend: 'stable' },
-    ],
-    data: [
-      { name: 'Python', percentage: 93, trend: 'rising' },
-      { name: 'SQL', percentage: 88, trend: 'stable' },
-      { name: 'Machine Learning', percentage: 72, trend: 'rising' },
-      { name: 'Tableau / Power BI', percentage: 65, trend: 'rising' },
-      { name: 'Pandas / NumPy', percentage: 80, trend: 'stable' },
-      { name: 'Apache Spark', percentage: 45, trend: 'rising' },
-      { name: 'Statistics', percentage: 70, trend: 'stable' },
-      { name: 'Cloud (AWS/GCP)', percentage: 58, trend: 'rising' },
-    ],
-    ml: [
-      { name: 'Python', percentage: 97, trend: 'rising' },
-      { name: 'PyTorch / TensorFlow', percentage: 85, trend: 'rising' },
-      { name: 'LLMs / Transformers', percentage: 78, trend: 'rising' },
-      { name: 'MLOps', percentage: 60, trend: 'rising' },
-      { name: 'SQL', percentage: 65, trend: 'stable' },
-      { name: 'Docker / Kubernetes', percentage: 55, trend: 'rising' },
-      { name: 'Research Papers', percentage: 50, trend: 'stable' },
-      { name: 'Cloud ML Services', percentage: 68, trend: 'rising' },
-    ],
-    product: [
-      { name: 'Product Strategy', percentage: 90, trend: 'stable' },
-      { name: 'SQL / Analytics', percentage: 75, trend: 'rising' },
-      { name: 'Figma / Design', percentage: 68, trend: 'rising' },
-      { name: 'Agile / Scrum', percentage: 85, trend: 'stable' },
-      { name: 'User Research', percentage: 72, trend: 'rising' },
-      { name: 'A/B Testing', percentage: 65, trend: 'rising' },
-      { name: 'Roadmapping', percentage: 80, trend: 'stable' },
-      { name: 'Stakeholder Mgmt', percentage: 78, trend: 'stable' },
-    ],
-    default: [
-      { name: 'Communication', percentage: 88, trend: 'stable' },
-      { name: 'Problem Solving', percentage: 85, trend: 'stable' },
-      { name: 'Python / SQL', percentage: 72, trend: 'rising' },
-      { name: 'Data Analysis', percentage: 68, trend: 'rising' },
-      { name: 'Project Management', percentage: 75, trend: 'stable' },
-      { name: 'Cloud Basics', percentage: 60, trend: 'rising' },
-      { name: 'Leadership', percentage: 65, trend: 'stable' },
-      { name: 'Excel / Sheets', percentage: 80, trend: 'stable' },
-    ]
-  };
-
-  const salaryMap = {
-    frontend: { median: '₹12 LPA', range_low: '₹6 LPA', range_high: '₹30 LPA', freshers: '₹4–7 LPA', senior: '₹25–45 LPA' },
-    data: { median: '₹10 LPA', range_low: '₹5 LPA', range_high: '₹28 LPA', freshers: '₹4–6 LPA', senior: '₹20–40 LPA' },
-    ml: { median: '₹16 LPA', range_low: '₹8 LPA', range_high: '₹45 LPA', freshers: '₹6–10 LPA', senior: '₹35–70 LPA' },
-    product: { median: '₹18 LPA', range_low: '₹8 LPA', range_high: '₹50 LPA', freshers: '₹6–10 LPA', senior: '₹40–80 LPA' },
-    default: { median: '₹8 LPA', range_low: '₹4 LPA', range_high: '₹20 LPA', freshers: '₹3–5 LPA', senior: '₹15–30 LPA' }
-  };
-
-  const companiesMap = {
-    frontend: [
-      { name: 'Flipkart', openings: 23, type: 'hot' },
-      { name: 'Razorpay', openings: 17, type: 'hot' },
-      { name: 'Meesho', openings: 14, type: 'hot' },
-      { name: 'Swiggy', openings: 12, type: 'active' },
-      { name: 'Zepto', openings: 9, type: 'active' },
-      { name: 'CRED', openings: 8, type: 'active' },
-    ],
-    data: [
-      { name: 'Walmart Global Tech', openings: 31, type: 'hot' },
-      { name: 'Swiggy', openings: 22, type: 'hot' },
-      { name: 'PhonePe', openings: 18, type: 'hot' },
-      { name: 'Paytm', openings: 14, type: 'active' },
-      { name: 'OLA', openings: 11, type: 'active' },
-      { name: 'Byju\'s', openings: 9, type: 'active' },
-    ],
-    ml: [
-      { name: 'Google India', openings: 15, type: 'hot' },
-      { name: 'Microsoft India', openings: 12, type: 'hot' },
-      { name: 'Amazon India', openings: 19, type: 'hot' },
-      { name: 'Sarvam AI', openings: 8, type: 'hot' },
-      { name: 'Krutrim', openings: 6, type: 'hot' },
-      { name: 'Fractal Analytics', openings: 11, type: 'active' },
-    ],
-    product: [
-      { name: 'Zomato', openings: 10, type: 'hot' },
-      { name: 'CRED', openings: 8, type: 'hot' },
-      { name: 'Razorpay', openings: 7, type: 'hot' },
-      { name: 'Groww', openings: 9, type: 'active' },
-      { name: 'Zerodha', openings: 5, type: 'active' },
-      { name: 'Urban Company', openings: 6, type: 'active' },
-    ],
-    default: [
-      { name: 'Infosys', openings: 45, type: 'hot' },
-      { name: 'TCS', openings: 38, type: 'hot' },
-      { name: 'Wipro', openings: 30, type: 'hot' },
-      { name: 'HCL', openings: 22, type: 'active' },
-      { name: 'Cognizant', openings: 19, type: 'active' },
-      { name: 'Accenture', openings: 25, type: 'active' },
-    ]
-  };
-
-  const getCategory = (role) => {
-    const r = role.toLowerCase();
-    if (r.includes('front') || r.includes('react') || r.includes('ui') || r.includes('web')) return 'frontend';
-    if (r.includes('data analyst') || r.includes('business') || r.includes('bi ')) return 'data';
-    if (r.includes('ml') || r.includes('machine learning') || r.includes('deep learning') || r.includes('nlp') || r.includes('ai engineer') || r.includes('data scientist')) return 'ml';
-    if (r.includes('product') || r.includes('pm ') || r.includes(' pm')) return 'product';
-    return 'default';
-  };
-
-  const cat = getCategory(role);
-
-  return {
-    summary: `The <strong>${role}</strong> job market in <strong>${location}</strong> is currently <strong>highly competitive</strong> with strong demand from product-first startups and tech giants alike. ${cat === 'ml' ? 'The AI/ML wave has significantly increased demand, with LLM experience commanding a 40–60% salary premium.' : cat === 'frontend' ? 'React ecosystem dominance is clear — teams are standardizing on React + TypeScript + Next.js stacks.' : cat === 'data' ? 'Data literacy is now table stakes — SQL and Python are baseline expectations for even entry-level roles.' : 'Candidates with cross-functional skills and hands-on project portfolios are getting 2–3x more callbacks.'} The market favors <span class="highlight">candidates with proven portfolio work</span> over pure certifications. ${jobs.length > 0 ? `Based on ${jobs.length} live listings analyzed.` : 'Based on current market trends.'}`,
-    topSkills: skillSets[cat] || skillSets.default,
-    salaryInsights: salaryMap[cat] || salaryMap.default,
-    topCompanies: companiesMap[cat] || companiesMap.default,
-    marketSignal: cat === 'ml' ? 'candidate' : 'balanced'
-  };
-}
-
-// ─── Demo Jobs Data ───────────────────────────────────────────────────────────
+// ─── Demo Data ────────────────────────────────────────────────────────────────
 function getDemoJobs(role, location) {
   const companies = [
-    'Flipkart', 'Razorpay', 'Swiggy', 'Meesho', 'CRED', 'Zepto',
-    'PhonePe', 'Paytm', 'Groww', 'Zerodha', 'Urban Company', 'Nykaa'
+    'Flipkart','Razorpay','Swiggy','Meesho','CRED','Zepto',
+    'PhonePe','Paytm','Groww','Zerodha','Urban Company','Nykaa',
+    'Ola','Dunzo','BrowserStack','Postman'
   ];
-  const skillPool = {
-    frontend: ['React', 'TypeScript', 'Next.js', 'CSS', 'JavaScript', 'Redux', 'Tailwind', 'Node.js'],
-    data: ['Python', 'SQL', 'Tableau', 'Power BI', 'Excel', 'Machine Learning', 'Pandas', 'NumPy'],
-    ml: ['Python', 'TensorFlow', 'PyTorch', 'Scikit-learn', 'NLP', 'LLMs', 'Docker', 'SQL'],
-    default: ['Python', 'SQL', 'Communication', 'Problem Solving', 'Excel', 'Git', 'Agile']
-  };
-  const roleLC = role.toLowerCase();
-  let pool = skillPool.default;
-  if (roleLC.includes('front') || roleLC.includes('react')) pool = skillPool.frontend;
-  else if (roleLC.includes('data') || roleLC.includes('analyst')) pool = skillPool.data;
-  else if (roleLC.includes('ml') || roleLC.includes('machine') || roleLC.includes('scientist')) pool = skillPool.ml;
+  const skillPool = getSkillPool(role);
 
-  return Array.from({ length: 15 }, (_, i) => ({
-    title: `${role}${i < 3 ? '' : i < 6 ? ' — Senior' : i < 9 ? ' — Junior' : ' — Intern'}`,
-    company: companies[i % companies.length],
-    location: location,
-    salary: i < 5 ? `₹${8 + i * 3}–${14 + i * 4} LPA` : i < 10 ? `₹${5 + i}–${10 + i} LPA` : 'Not specified',
-    skills: pool.sort(() => Math.random() - 0.5).slice(0, 3 + (i % 3)),
-    experience: i < 4 ? '3-6 years' : i < 8 ? '1-3 years' : '0-1 years'
-  }));
+  return Array.from({ length: 18 }, (_, i) => {
+    const lvl = i < 5 ? 'Senior' : i < 12 ? '' : 'Junior/Intern';
+    const salBase = i < 5 ? (16 + i * 3) : i < 12 ? (8 + i) : (4 + i);
+    return {
+      title:      lvl ? `${role} — ${lvl}` : role,
+      company:    companies[i % companies.length],
+      location,
+      salary:     i % 3 === 0 ? '' : `₹${salBase}–${salBase + 6} LPA`,
+      skills:     skillPool.slice(i % 3, (i % 3) + 4),
+      experience: i < 5 ? '5-8 yrs' : i < 12 ? '2-5 yrs' : '0-2 yrs'
+    };
+  });
 }
 
-// ─── Render Results ───────────────────────────────────────────────────────────
-function renderResults(role, location, jobs, analysis) {
-  // Header
-  document.getElementById('report-title').textContent = `${role} Market Intelligence — ${location}`;
-  document.getElementById('report-subtitle').textContent =
-    `Analyzed ${new Date().toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })}`;
-  document.getElementById('jobs-count').textContent = jobs.length;
-  document.getElementById('companies-count').textContent = analysis.topCompanies?.length || '—';
-  document.getElementById('skills-count').textContent = analysis.topSkills?.length || '—';
+function getSkillPool(role) {
+  const r = role.toLowerCase();
+  if (r.includes('front') || r.includes('react') || r.includes('ui'))
+    return ['React','TypeScript','Next.js','JavaScript','CSS','Node.js','Redux','Tailwind','GraphQL','Webpack'];
+  if (r.includes('data scientist') || r.includes('ml') || r.includes('machine learning') || r.includes('deep learning'))
+    return ['Python','TensorFlow','PyTorch','Scikit-learn','SQL','NLP','LLMs','Docker','Spark','HuggingFace'];
+  if (r.includes('data analyst') || r.includes('business analyst'))
+    return ['Python','SQL','Tableau','Power BI','Excel','Pandas','Statistics','NumPy','Looker','BigQuery'];
+  if (r.includes('backend') || r.includes('java') || r.includes('node'))
+    return ['Java','Spring Boot','Node.js','Python','PostgreSQL','Redis','Microservices','Docker','Kafka','REST APIs'];
+  if (r.includes('devops') || r.includes('cloud') || r.includes('sre'))
+    return ['AWS','Kubernetes','Docker','Terraform','Jenkins','Linux','Python','CI/CD','Helm','Ansible'];
+  if (r.includes('product') || r.includes(' pm ') || r.includes(' pm'))
+    return ['Product Strategy','SQL','Figma','Agile','User Research','A/B Testing','Roadmapping','Analytics','Jira','OKRs'];
+  return ['Python','SQL','Communication','Problem Solving','Excel','Git','Agile','Data Analysis','Project Mgmt','Cloud Basics'];
+}
 
-  // Skills
+// ─── Local AI Analysis (Fallback) ────────────────────────────────────────────
+function generateLocalAnalysis(role, location, jobs) {
+  const cat = getCategory(role);
+  const { skills, salary, companies, summary } = MARKET_DATA[cat] || MARKET_DATA.default;
+
+  return {
+    summary: summary(role, location, jobs.length),
+    topSkills: skills,
+    salaryInsights: salary,
+    topCompanies: companies,
+    marketSignal: cat === 'ml' ? 'candidate' : cat === 'product' ? 'candidate' : 'balanced',
+    hotTip: HOT_TIPS[cat] || HOT_TIPS.default
+  };
+}
+
+function getCategory(role) {
+  const r = role.toLowerCase();
+  if (r.includes('front') || r.includes('react') || r.includes('vue') || r.includes('angular'))  return 'frontend';
+  if (r.includes('backend') || r.includes('java') || r.includes('node.js') || r.includes('api')) return 'backend';
+  if (r.includes('devops') || r.includes('cloud') || r.includes('sre') || r.includes('infra'))   return 'devops';
+  if (r.includes('ml') || r.includes('machine learning') || r.includes('deep') || r.includes('data scientist') || r.includes('ai engineer')) return 'ml';
+  if (r.includes('data analyst') || r.includes('business analyst') || r.includes('bi '))          return 'data';
+  if (r.includes('product') || r.includes(' pm'))                                                  return 'product';
+  if (r.includes('full') || r.includes('fullstack'))                                               return 'fullstack';
+  return 'default';
+}
+
+const MARKET_DATA = {
+  frontend: {
+    skills: [
+      { name: 'React.js',    percentage: 89, trend: 'rising' },
+      { name: 'TypeScript',  percentage: 78, trend: 'rising' },
+      { name: 'Next.js',     percentage: 70, trend: 'rising' },
+      { name: 'JavaScript',  percentage: 96, trend: 'stable' },
+      { name: 'Tailwind CSS',percentage: 64, trend: 'rising' },
+      { name: 'Node.js',     percentage: 57, trend: 'stable' },
+      { name: 'REST / GraphQL', percentage: 73, trend: 'stable' },
+      { name: 'Git & CI/CD', percentage: 91, trend: 'stable' },
+    ],
+    salary: { median:'₹14 LPA', range_low:'₹6 LPA', range_high:'₹35 LPA', freshers:'₹4–7 LPA', senior:'₹25–50 LPA' },
+    companies: [
+      { name:'Flipkart',   openings:24, type:'hot'    },
+      { name:'Razorpay',   openings:18, type:'hot'    },
+      { name:'Meesho',     openings:15, type:'hot'    },
+      { name:'Swiggy',     openings:13, type:'active' },
+      { name:'CRED',       openings:9,  type:'active' },
+      { name:'Zepto',      openings:7,  type:'active' },
+    ],
+    summary: (role,loc,count) => `The <strong>${role}</strong> market in <strong>${loc}</strong> is booming — React + TypeScript is the undisputed stack of 2026. <span class='highlight'>Next.js expertise commands a 25–35% salary premium</span> over plain React roles. Fintech and quick-commerce startups are the most active hirers. ${count > 0 ? `Analysis based on ${count} live listings.` : ''}`,
+  },
+  ml: {
+    skills: [
+      { name: 'Python',         percentage: 97, trend: 'rising' },
+      { name: 'LLMs / GenAI',   percentage: 84, trend: 'rising' },
+      { name: 'PyTorch',        percentage: 78, trend: 'rising' },
+      { name: 'MLOps',          percentage: 65, trend: 'rising' },
+      { name: 'SQL',            percentage: 68, trend: 'stable' },
+      { name: 'HuggingFace',    percentage: 72, trend: 'rising' },
+      { name: 'Docker / K8s',   percentage: 58, trend: 'rising' },
+      { name: 'Cloud ML (AWS/GCP)', percentage: 70, trend: 'rising' },
+    ],
+    salary: { median:'₹18 LPA', range_low:'₹8 LPA', range_high:'₹55 LPA', freshers:'₹7–12 LPA', senior:'₹40–80 LPA' },
+    companies: [
+      { name:'Google India',    openings:14, type:'hot'    },
+      { name:'Amazon India',    openings:19, type:'hot'    },
+      { name:'Microsoft India', openings:12, type:'hot'    },
+      { name:'Sarvam AI',       openings:8,  type:'hot'    },
+      { name:'Fractal Analytics', openings:11, type:'active' },
+      { name:'Krutrim',         openings:6,  type:'hot'    },
+    ],
+    summary: (role,loc,count) => `<strong>${role}</strong> roles in <strong>${loc}</strong> are seeing 3x demand growth driven by the GenAI wave. <span class='highlight'>LLM fine-tuning and RAG experience can add ₹10–20 LPA</span> to your offer. MLOps is the new differentiator — candidates who can ship models to production get hired in days, not weeks. ${count > 0 ? `${count} live listings analyzed.` : ''}`,
+  },
+  data: {
+    skills: [
+      { name: 'Python',      percentage: 90, trend: 'rising' },
+      { name: 'SQL',         percentage: 95, trend: 'stable' },
+      { name: 'Tableau',     percentage: 68, trend: 'stable' },
+      { name: 'Power BI',    percentage: 64, trend: 'rising' },
+      { name: 'Pandas/NumPy',percentage: 82, trend: 'stable' },
+      { name: 'BigQuery',    percentage: 55, trend: 'rising' },
+      { name: 'Statistics',  percentage: 74, trend: 'stable' },
+      { name: 'Excel',       percentage: 78, trend: 'stable' },
+    ],
+    salary: { median:'₹10 LPA', range_low:'₹5 LPA', range_high:'₹25 LPA', freshers:'₹4–6 LPA', senior:'₹20–38 LPA' },
+    companies: [
+      { name:'Walmart Global Tech', openings:28, type:'hot'    },
+      { name:'Swiggy',              openings:20, type:'hot'    },
+      { name:'PhonePe',             openings:17, type:'hot'    },
+      { name:'Paytm',               openings:13, type:'active' },
+      { name:'OLA',                 openings:10, type:'active' },
+      { name:'Meesho',              openings:9,  type:'active' },
+    ],
+    summary: (role,loc,count) => `<strong>Data Analyst</strong> demand in <strong>${loc}</strong> remains strong — SQL + Python is now the absolute baseline. <span class='highlight'>Candidates combining BI tools with basic ML knowledge get 40% more callbacks</span>. E-commerce and fintech dominate hiring. Cloud data warehouses (BigQuery, Snowflake) are fast-replacing legacy tools. ${count > 0 ? `${count} listings analyzed.` : ''}`,
+  },
+  backend: {
+    skills: [
+      { name: 'Java / Spring',  percentage: 72, trend: 'stable' },
+      { name: 'Node.js',        percentage: 78, trend: 'rising' },
+      { name: 'Python',         percentage: 75, trend: 'rising' },
+      { name: 'PostgreSQL',     percentage: 82, trend: 'stable' },
+      { name: 'Microservices',  percentage: 80, trend: 'rising' },
+      { name: 'Docker / K8s',   percentage: 76, trend: 'rising' },
+      { name: 'Redis / Kafka',  percentage: 65, trend: 'rising' },
+      { name: 'REST / gRPC',    percentage: 88, trend: 'stable' },
+    ],
+    salary: { median:'₹16 LPA', range_low:'₹7 LPA', range_high:'₹40 LPA', freshers:'₹5–9 LPA', senior:'₹30–60 LPA' },
+    companies: [
+      { name:'Razorpay',    openings:22, type:'hot'    },
+      { name:'Groww',       openings:18, type:'hot'    },
+      { name:'PhonePe',     openings:15, type:'hot'    },
+      { name:'Zerodha',     openings:10, type:'active' },
+      { name:'CRED',        openings:8,  type:'active' },
+      { name:'BrowserStack',openings:12, type:'active' },
+    ],
+    summary: (role,loc,count) => `<strong>Backend Engineering</strong> in <strong>${loc}</strong> is a candidate-friendly market in 2026. Distributed systems knowledge is highly valued. <span class='highlight'>Node.js is overtaking Java for new projects</span>, but Java/Spring Boot still dominates enterprise. Fintech companies offer the best packages + fastest growth. ${count > 0 ? `${count} listings analyzed.` : ''}`,
+  },
+  devops: {
+    skills: [
+      { name: 'AWS',           percentage: 88, trend: 'rising' },
+      { name: 'Kubernetes',    percentage: 82, trend: 'rising' },
+      { name: 'Docker',        percentage: 91, trend: 'stable' },
+      { name: 'Terraform',     percentage: 75, trend: 'rising' },
+      { name: 'Python / Bash', percentage: 78, trend: 'stable' },
+      { name: 'CI/CD (GHA)',   percentage: 80, trend: 'rising' },
+      { name: 'Linux',         percentage: 93, trend: 'stable' },
+      { name: 'Helm',          percentage: 65, trend: 'rising' },
+    ],
+    salary: { median:'₹18 LPA', range_low:'₹8 LPA', range_high:'₹45 LPA', freshers:'₹6–10 LPA', senior:'₹35–65 LPA' },
+    companies: [
+      { name:'Amazon India',  openings:20, type:'hot'    },
+      { name:'Google India',  openings:14, type:'hot'    },
+      { name:'Postman',       openings:9,  type:'hot'    },
+      { name:'Flipkart',      openings:16, type:'active' },
+      { name:'Swiggy',        openings:11, type:'active' },
+      { name:'BrowserStack',  openings:8,  type:'active' },
+    ],
+    summary: (role,loc,count) => `<strong>DevOps/Cloud</strong> talent is scarce in <strong>${loc}</strong> — this is firmly a candidate's market. Kubernetes + Terraform certified professionals are being hired within 1 week of applying. <span class='highlight'>AWS expertise alone can justify ₹10–15 LPA salary bumps</span>. Platform engineering roles are outpacing traditional ops. ${count > 0 ? `${count} listings analyzed.` : ''}`,
+  },
+  product: {
+    skills: [
+      { name: 'Product Strategy',percentage: 90, trend: 'stable' },
+      { name: 'SQL / Analytics', percentage: 78, trend: 'rising' },
+      { name: 'Figma',           percentage: 70, trend: 'rising' },
+      { name: 'Agile / Scrum',   percentage: 85, trend: 'stable' },
+      { name: 'User Research',   percentage: 74, trend: 'rising' },
+      { name: 'A/B Testing',     percentage: 67, trend: 'rising' },
+      { name: 'OKRs / Metrics',  percentage: 79, trend: 'stable' },
+      { name: 'AI/LLM Fluency',  percentage: 60, trend: 'rising' },
+    ],
+    salary: { median:'₹20 LPA', range_low:'₹10 LPA', range_high:'₹55 LPA', freshers:'₹7–12 LPA', senior:'₹40–80 LPA' },
+    companies: [
+      { name:'Zomato',        openings:9,  type:'hot'    },
+      { name:'CRED',          openings:7,  type:'hot'    },
+      { name:'Razorpay',      openings:8,  type:'hot'    },
+      { name:'Groww',         openings:10, type:'active' },
+      { name:'Zerodha',       openings:5,  type:'active' },
+      { name:'Urban Company', openings:6,  type:'active' },
+    ],
+    summary: (role,loc,count) => `<strong>Product Management</strong> in <strong>${loc}</strong> is hyper-competitive at the entry level but lucrative at senior levels. <span class='highlight'>PMs who can write SQL and run their own A/B tests are getting 30–50% higher offers</span>. AI-native PM experience (prompting, LLM workflows) is the hottest new differentiator. ${count > 0 ? `${count} listings analyzed.` : ''}`,
+  },
+  fullstack: {
+    skills: [
+      { name: 'React.js',    percentage: 85, trend: 'rising' },
+      { name: 'Node.js',     percentage: 88, trend: 'stable' },
+      { name: 'TypeScript',  percentage: 75, trend: 'rising' },
+      { name: 'PostgreSQL',  percentage: 78, trend: 'stable' },
+      { name: 'Next.js',     percentage: 68, trend: 'rising' },
+      { name: 'Docker',      percentage: 62, trend: 'rising' },
+      { name: 'REST APIs',   percentage: 92, trend: 'stable' },
+      { name: 'AWS Basics',  percentage: 58, trend: 'rising' },
+    ],
+    salary: { median:'₹15 LPA', range_low:'₹7 LPA', range_high:'₹38 LPA', freshers:'₹5–8 LPA', senior:'₹28–55 LPA' },
+    companies: [
+      { name:'Razorpay',    openings:20, type:'hot'    },
+      { name:'Meesho',      openings:16, type:'hot'    },
+      { name:'Zepto',       openings:12, type:'hot'    },
+      { name:'Swiggy',      openings:14, type:'active' },
+      { name:'Groww',       openings:9,  type:'active' },
+      { name:'CRED',        openings:8,  type:'active' },
+    ],
+    summary: (role,loc,count) => `<strong>Full Stack</strong> demand in <strong>${loc}</strong> is consistently high — the MERN stack still dominates hiring. <span class='highlight'>Next.js + TypeScript + PostgreSQL has become the de-facto "modern fullstack" stack</span>. Startups prefer fullstack generalists who can own features end-to-end. ${count > 0 ? `${count} listings analyzed.` : ''}`,
+  },
+  default: {
+    skills: [
+      { name: 'Python',         percentage: 75, trend: 'rising' },
+      { name: 'SQL',            percentage: 80, trend: 'stable' },
+      { name: 'Communication',  percentage: 88, trend: 'stable' },
+      { name: 'Problem Solving',percentage: 86, trend: 'stable' },
+      { name: 'Git',            percentage: 78, trend: 'stable' },
+      { name: 'Cloud Basics',   percentage: 62, trend: 'rising' },
+      { name: 'Agile',          percentage: 72, trend: 'stable' },
+      { name: 'Data Analysis',  percentage: 68, trend: 'rising' },
+    ],
+    salary: { median:'₹10 LPA', range_low:'₹4 LPA', range_high:'₹25 LPA', freshers:'₹3–6 LPA', senior:'₹18–35 LPA' },
+    companies: [
+      { name:'Infosys',    openings:45, type:'hot'    },
+      { name:'TCS',        openings:38, type:'hot'    },
+      { name:'Wipro',      openings:30, type:'hot'    },
+      { name:'Accenture',  openings:25, type:'active' },
+      { name:'HCL',        openings:22, type:'active' },
+      { name:'Cognizant',  openings:18, type:'active' },
+    ],
+    summary: (role,loc,count) => `The <strong>${role}</strong> market in <strong>${loc}</strong> shows steady demand. <span class='highlight'>Candidates with portfolio projects and domain-specific skills get 2–3x more callbacks</span>. Combining technical skills with communication and business context significantly improves hiring outcomes. ${count > 0 ? `${count} listings analyzed.` : ''}`,
+  }
+};
+
+const HOT_TIPS = {
+  frontend: '💡 Build and deploy 2–3 Next.js projects with TypeScript on Vercel — recruiters prioritize live demos over resume bullet points.',
+  ml:       '💡 Fine-tune an open-source LLM on a domain-specific dataset and write about it on LinkedIn — this gets you into the top 5% of applicants.',
+  data:     '💡 Create a public Tableau / Power BI dashboard using real government data — this single portfolio piece gets more traction than 3 certifications.',
+  backend:  '💡 Contribute to an open-source backend project (any PR counts) and mention it in your resume — it signals production-level code quality.',
+  devops:   '💡 Get AWS Solutions Architect Associate certified — it doubles your callback rate for mid-senior roles across all company sizes.',
+  product:  '💡 Write a public tear-down of a product\'s growth strategy on LinkedIn — hiring managers Google candidates and this instantly signals PM thinking.',
+  fullstack:'💡 Build a SaaS side project (even a tiny one) and deploy it — "I built and shipped X" is worth more than any certification in fullstack interviews.',
+  default:  '💡 Add a "Projects" section to your GitHub README and LinkedIn — 72% of recruiters check these before reading your resume.'
+};
+
+// ─── Render Results ───────────────────────────────────────────────────────────
+function renderResults(role, location, jobs, analysis, source, aiSource) {
+  // Stats header
+  document.getElementById('report-title').textContent = `${role} · ${location}`;
+  document.getElementById('report-subtitle').textContent =
+    `Analyzed ${new Date().toLocaleString('en-IN', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })} · Source: ${source === 'demo' ? '📊 Demo' : '🕷️ Anakin Scraper'} · AI: ${aiSource === 'local' ? '🧠 Local' : '✨ Anakin AI'}`;
+
+  document.getElementById('jobs-count').textContent     = jobs.length;
+  document.getElementById('companies-count').textContent = analysis.topCompanies?.length || '—';
+  document.getElementById('skills-count').textContent   = analysis.topSkills?.length || '—';
+
+  // Market signal badge
+  const signal = analysis.marketSignal || 'balanced';
+  const signalMap = {
+    candidate: { label: "🟢 Candidate's Market", style: 'color:#4ade80;background:rgba(74,222,128,0.1);border:1px solid rgba(74,222,128,0.25)' },
+    balanced:  { label: "🟡 Balanced Market",    style: 'color:#f5c842;background:rgba(245,200,66,0.1);border:1px solid rgba(245,200,66,0.25)' },
+    buyer:     { label: "🔴 Employer's Market",  style: 'color:#ff5e7d;background:rgba(255,94,125,0.1);border:1px solid rgba(255,94,125,0.25)' }
+  };
+  const sigEl = document.getElementById('market-signal');
+  if (sigEl) {
+    const s = signalMap[signal] || signalMap.balanced;
+    sigEl.textContent = s.label;
+    sigEl.style.cssText = `${s.style};padding:4px 12px;border-radius:20px;font-size:0.78rem;font-weight:600;`;
+  }
+
+  // ── Skills ─────────────────────────────────────────────────────────────────
   const skillsList = document.getElementById('skills-list');
   skillsList.innerHTML = '';
   (analysis.topSkills || []).forEach(skill => {
-    const div = document.createElement('div');
-    div.className = 'skill-row';
-    div.innerHTML = `
+    const row = document.createElement('div');
+    row.className = 'skill-row';
+    const trendColor = skill.trend === 'rising' ? '#4ade80' : '#f5c842';
+    const trendIcon  = skill.trend === 'rising' ? '↑' : '→';
+    row.innerHTML = `
       <div class="skill-meta">
         <span class="skill-name">${skill.name}</span>
-        <span class="skill-pct">${skill.percentage}% ${skill.trend === 'rising' ? '↑' : '→'}</span>
+        <span class="skill-pct" style="color:${trendColor}">${skill.percentage}% ${trendIcon}</span>
       </div>
       <div class="skill-bar-bg">
         <div class="skill-bar-fill" style="width:0%" data-width="${skill.percentage}%"></div>
-      </div>
-    `;
-    skillsList.appendChild(div);
+      </div>`;
+    skillsList.appendChild(row);
   });
-  // Animate bars
-  setTimeout(() => {
-    document.querySelectorAll('.skill-bar-fill').forEach(el => {
-      el.style.width = el.dataset.width;
-    });
-  }, 100);
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.skill-bar-fill').forEach(el => { el.style.width = el.dataset.width; });
+  });
 
-  // Salary
+  // ── Salary ─────────────────────────────────────────────────────────────────
   const sal = analysis.salaryInsights || {};
   document.getElementById('salary-content').innerHTML = `
     <div class="salary-range-block">
-      <div class="salary-label">Median Salary</div>
+      <div class="salary-label">Median Market Salary</div>
       <div class="salary-value mid">${sal.median || '—'}</div>
     </div>
     <div class="salary-grid">
       <div class="salary-stat-pill">
-        <div class="label">Entry Level</div>
+        <div class="label">Fresher / Entry</div>
         <div class="val low">${sal.freshers || sal.range_low || '—'}</div>
       </div>
       <div class="salary-stat-pill">
@@ -511,73 +529,128 @@ function renderResults(role, location, jobs, analysis) {
         <div class="val high">${sal.senior || sal.range_high || '—'}</div>
       </div>
       <div class="salary-stat-pill">
-        <div class="label">Range Low</div>
+        <div class="label">Range Min</div>
         <div class="val">${sal.range_low || '—'}</div>
       </div>
       <div class="salary-stat-pill">
-        <div class="label">Range High</div>
+        <div class="label">Range Max</div>
         <div class="val">${sal.range_high || '—'}</div>
       </div>
-    </div>
-  `;
+    </div>`;
 
-  // Companies
+  // ── Companies ──────────────────────────────────────────────────────────────
   const companiesList = document.getElementById('companies-list');
   companiesList.innerHTML = '';
   (analysis.topCompanies || []).forEach((co, i) => {
+    const avatarColors = [
+      'linear-gradient(135deg,#7c6af7,#f072b6)',
+      'linear-gradient(135deg,#38d9c0,#7c6af7)',
+      'linear-gradient(135deg,#f5c842,#f072b6)',
+      'linear-gradient(135deg,#4ade80,#38d9c0)',
+    ];
     const div = document.createElement('div');
     div.className = 'company-row';
     div.innerHTML = `
       <span class="company-rank">#${i+1}</span>
-      <div class="company-avatar">${co.name.charAt(0)}</div>
+      <div class="company-avatar" style="background:${avatarColors[i%4]}">${co.name.charAt(0)}</div>
       <div class="company-info">
         <div class="company-name">${co.name}</div>
         <div class="company-openings">${co.openings} open roles</div>
       </div>
-      <span class="company-badge">${co.type === 'hot' ? '🔥 Hot' : '✅ Active'}</span>
-    `;
+      <span class="company-badge">${co.type === 'hot' ? '🔥 Hot' : '✅ Active'}</span>`;
     companiesList.appendChild(div);
   });
 
-  // Summary
-  document.getElementById('summary-text').innerHTML = analysis.summary || 'Analysis complete.';
+  // ── AI Summary ─────────────────────────────────────────────────────────────
+  let summaryHTML = analysis.summary || '—';
+  if (analysis.hotTip) {
+    summaryHTML += `<div class="hot-tip">${analysis.hotTip}</div>`;
+  }
+  document.getElementById('summary-text').innerHTML = summaryHTML;
 
-  // Jobs table
+  // ── Jobs Table ─────────────────────────────────────────────────────────────
   const tbody = document.getElementById('jobs-tbody');
   tbody.innerHTML = '';
-  jobs.slice(0, 10).forEach(job => {
+  jobs.slice(0, 12).forEach(job => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${job.title || '—'}</td>
       <td>${job.company || '—'}</td>
       <td>${job.location || '—'}</td>
-      <td class="salary-cell">${job.salary || 'N/A'}</td>
+      <td class="salary-cell">${job.salary || '—'}</td>
       <td>
         <div class="skills-cell">
           ${(job.skills || []).slice(0,4).map(s => `<span class="skill-tag">${s}</span>`).join('')}
         </div>
-      </td>
-    `;
+      </td>`;
     tbody.appendChild(tr);
   });
 }
 
+// ─── UI State ─────────────────────────────────────────────────────────────────
+function setUI(state) {
+  const loading = document.getElementById('loading-section');
+  const results = document.getElementById('results-section');
+  const btn     = document.getElementById('analyze-btn');
+
+  if (state === 'loading') {
+    loading.style.display = 'flex';
+    results.style.display = 'none';
+    btn.disabled = true;
+  } else if (state === 'results') {
+    loading.style.display = 'none';
+    results.style.display = 'block';
+    btn.disabled = false;
+    results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else {
+    loading.style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+function resetSteps() {
+  [1,2,3,4].forEach(n => {
+    const el = document.getElementById(`step-${n}`);
+    if (el) { el.classList.remove('active','done'); }
+  });
+}
+
+function activateStep(n) {
+  const prev = document.getElementById(`step-${n-1}`);
+  if (prev) { prev.classList.remove('active'); prev.classList.add('done'); }
+  const cur = document.getElementById(`step-${n}`);
+  if (cur) cur.classList.add('active');
+}
+
 function resetSearch() {
   document.getElementById('results-section').style.display = 'none';
-  document.getElementById('search-section').scrollIntoView({ behavior: 'smooth' });
-  document.getElementById('role-input').focus();
+  document.getElementById('role-input').value     = '';
+  document.getElementById('location-input').value = '';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  setTimeout(() => document.getElementById('role-input').focus(), 400);
+}
+
+// ─── Toast ───────────────────────────────────────────────────────────────────
+function showToast(msg) {
+  const existing = document.querySelector('.jp-toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.className = 'jp-toast';
+  toast.style.cssText = `
+    position:fixed;bottom:28px;left:50%;transform:translateX(-50%);
+    background:#1a1b26;border:1px solid rgba(124,106,247,0.3);border-radius:12px;
+    color:#e0e0f0;font-size:0.85rem;padding:12px 22px;z-index:9999;
+    font-family:'Inter',sans-serif;box-shadow:0 8px 32px rgba(0,0,0,0.5);
+    animation:toastIn 0.3s ease-out;white-space:nowrap;
+  `;
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+
+  const style = document.createElement('style');
+  style.textContent = `@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}`;
+  document.head.appendChild(style);
+
+  setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3500);
 }
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
-
-// ─── Init ─────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  loadConfig();
-
-  // Enter key to search
-  ['role-input', 'location-input'].forEach(id => {
-    document.getElementById(id).addEventListener('keydown', e => {
-      if (e.key === 'Enter') runAnalysis();
-    });
-  });
-});
