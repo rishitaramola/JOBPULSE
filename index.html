@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JobPulse — AI Job Market Intelligence</title>
+  <meta name="description" content="JobPulse uses AI to analyze real-time job listings and surface trending skills, salary ranges, and top companies hiring for any role — powered by Anakin Wire & Universal Scraper." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Background orbs -->
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
+  <div class="bg-orb orb-3"></div>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="logo">
+      <span class="logo-icon">⚡</span>
+      <span class="logo-text">JobPulse</span>
+      <span class="logo-badge">AI</span>
+    </div>
+    <div class="header-meta">
+      <span class="powered-by">Powered by</span>
+      <span class="anakin-tag">Anakin Wire</span>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <main>
+    <section class="hero">
+      <div class="hero-tag">🔴 LIVE JOB MARKET DATA</div>
+      <h1 class="hero-title">Know exactly what<br /><span class="gradient-text">skills to learn next</span></h1>
+      <p class="hero-sub">
+        JobPulse scrapes live job listings using <strong>Anakin Universal Scraper</strong>,
+        then uses AI to surface the skills that are <em>actually</em> trending —
+        not last year's data.
+      </p>
+    </section>
+
+    <!-- Search Card -->
+    <div class="search-card" id="search-section">
+      <div class="search-row">
+        <div class="input-group">
+          <label class="input-label">Role</label>
+          <div class="input-wrap">
+            <span class="input-icon">💼</span>
+            <input
+              id="role-input"
+              class="input-field"
+              type="text"
+              placeholder="e.g. Data Analyst, Frontend Engineer"
+              value=""
+            />
+          </div>
+        </div>
+        <div class="input-group">
+          <label class="input-label">Location</label>
+          <div class="input-wrap">
+            <span class="input-icon">📍</span>
+            <input
+              id="location-input"
+              class="input-field"
+              type="text"
+              placeholder="e.g. Bangalore, Remote"
+              value=""
+            />
+          </div>
+        </div>
+        <button class="analyze-btn" id="analyze-btn" onclick="runAnalysis()">
+          <span class="btn-text">Analyze Market</span>
+          <span class="btn-icon">→</span>
+        </button>
+      </div>
+
+      <div class="example-chips">
+        <span class="chip-label">Try:</span>
+        <button class="chip" onclick="fillExample('Frontend Engineer', 'Bangalore')">Frontend · Bangalore</button>
+        <button class="chip" onclick="fillExample('Data Scientist', 'Remote')">Data Scientist · Remote</button>
+        <button class="chip" onclick="fillExample('Product Manager', 'Mumbai')">PM · Mumbai</button>
+        <button class="chip" onclick="fillExample('ML Engineer', 'Hyderabad')">ML Engineer · Hyderabad</button>
+      </div>
+    </div>
+
+    <!-- API Config (collapsible) -->
+    <div class="api-config-section" id="api-config">
+      <button class="config-toggle" onclick="toggleConfig()">
+        ⚙️ Configure API Keys <span id="config-arrow">▼</span>
+      </button>
+      <div class="config-body" id="config-body" style="display:none;">
+        <div class="config-row">
+          <div class="config-field">
+            <label class="config-label">Anakin.io Scraper API Key</label>
+            <input id="scraper-key" class="config-input" type="password" placeholder="your-anakin-io-key" />
+            <span class="config-hint">Get it at <a href="https://anakin.io" target="_blank">anakin.io</a> → Dashboard → API Keys</span>
+          </div>
+          <div class="config-field">
+            <label class="config-label">Anakin.ai App Token</label>
+            <input id="anakin-token" class="config-input" type="password" placeholder="your-anakin-ai-token" />
+            <span class="config-hint">Get it at <a href="https://app.anakin.ai/account/integrations" target="_blank">Anakin.ai</a> → Account → Integrations</span>
+          </div>
+        </div>
+        <div class="config-field" style="margin-top:12px;">
+          <label class="config-label">Gemini API Key (optional, for AI extraction)</label>
+          <input id="gemini-key" class="config-input" type="password" placeholder="AIza..." />
+          <span class="config-hint">Get it at <a href="https://aistudio.google.com" target="_blank">Google AI Studio</a> → free tier available</span>
+        </div>
+        <button class="save-config-btn" onclick="saveConfig()">💾 Save Keys</button>
+      </div>
+    </div>
+
+    <!-- Loading State -->
+    <div class="loading-section" id="loading-section" style="display:none;">
+      <div class="loading-card">
+        <div class="pulse-ring"></div>
+        <div class="loading-steps" id="loading-steps">
+          <div class="loading-step active" id="step-1">
+            <span class="step-icon">🕷️</span>
+            <span class="step-text">Scraping live job listings via Anakin Universal Scraper...</span>
+          </div>
+          <div class="loading-step" id="step-2">
+            <span class="step-icon">🔍</span>
+            <span class="step-text">Extracting skills, salaries & company data...</span>
+          </div>
+          <div class="loading-step" id="step-3">
+            <span class="step-icon">🧠</span>
+            <span class="step-text">Running AI analysis via Anakin workflow...</span>
+          </div>
+          <div class="loading-step" id="step-4">
+            <span class="step-icon">📊</span>
+            <span class="step-text">Generating your market intelligence report...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results Section -->
+    <div class="results-section" id="results-section" style="display:none;">
+
+      <!-- Report Header -->
+      <div class="report-header">
+        <div class="report-meta">
+          <h2 class="report-title" id="report-title">Market Intelligence Report</h2>
+          <p class="report-subtitle" id="report-subtitle">Based on live job listings</p>
+        </div>
+        <div class="report-stats">
+          <div class="stat-pill">
+            <span class="stat-num" id="jobs-count">—</span>
+            <span class="stat-label">Jobs Analyzed</span>
+          </div>
+          <div class="stat-pill">
+            <span class="stat-num" id="companies-count">—</span>
+            <span class="stat-label">Companies</span>
+          </div>
+          <div class="stat-pill">
+            <span class="stat-num" id="skills-count">—</span>
+            <span class="stat-label">Skills Ranked</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3-column grid -->
+      <div class="results-grid">
+
+        <!-- Skills Radar -->
+        <div class="result-card skills-card">
+          <div class="card-header">
+            <span class="card-icon">🎯</span>
+            <h3 class="card-title">Top Skills in Demand</h3>
+            <span class="card-tag">Right Now</span>
+          </div>
+          <div class="skills-list" id="skills-list">
+            <!-- filled by JS -->
+          </div>
+        </div>
+
+        <!-- Salary Insights -->
+        <div class="result-card salary-card">
+          <div class="card-header">
+            <span class="card-icon">💰</span>
+            <h3 class="card-title">Salary Intelligence</h3>
+            <span class="card-tag">Live Data</span>
+          </div>
+          <div class="salary-content" id="salary-content">
+            <!-- filled by JS -->
+          </div>
+        </div>
+
+        <!-- Companies Hiring -->
+        <div class="result-card companies-card">
+          <div class="card-header">
+            <span class="card-icon">🏢</span>
+            <h3 class="card-title">Top Companies Hiring</h3>
+            <span class="card-tag">Active Now</span>
+          </div>
+          <div class="companies-list" id="companies-list">
+            <!-- filled by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Summary -->
+      <div class="result-card summary-card">
+        <div class="card-header">
+          <span class="card-icon">🤖</span>
+          <h3 class="card-title">AI Market Brief</h3>
+          <span class="card-tag">Anakin AI</span>
+        </div>
+        <div class="summary-text" id="summary-text">
+          <!-- filled by JS -->
+        </div>
+      </div>
+
+      <!-- Raw Jobs Table -->
+      <div class="result-card jobs-table-card">
+        <div class="card-header">
+          <span class="card-icon">📋</span>
+          <h3 class="card-title">Sample Job Listings</h3>
+          <span class="card-tag">Scraped Live</span>
+        </div>
+        <div class="table-wrap">
+          <table class="jobs-table" id="jobs-table">
+            <thead>
+              <tr>
+                <th>Job Title</th>
+                <th>Company</th>
+                <th>Location</th>
+                <th>Salary</th>
+                <th>Key Skills</th>
+              </tr>
+            </thead>
+            <tbody id="jobs-tbody">
+              <!-- filled by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <button class="new-search-btn" onclick="resetSearch()">🔄 New Search</button>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>Built with <strong>Anakin Wire + Universal Scraper</strong> · Anakin Blitz V2 Hackathon · June 2026</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
