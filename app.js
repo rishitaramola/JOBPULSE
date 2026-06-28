@@ -14,8 +14,8 @@
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const CONFIG = {
-  scraperApiKey: '',   // anakin.io API key
-  anakinToken: '',     // anakin.ai bearer token
+  scraperApiKey: 'ask_70d816efcbb7a78071390742d37f77a11a01f3ccaad4d3366226f1c4e7228bfb',
+  anakinToken: '',  // anakin.ai token (optional — for AI analysis)
 };
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
